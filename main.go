@@ -19,8 +19,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/bpalermo/prometheus-ecs-discovery/pkg/aws"
 	"io/ioutil"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -153,11 +155,11 @@ func (t *AugmentedTask) ExporterInformation() []*PrometheusTaskInfo {
 			return ret
 		}
 
-		for _, iface := range t.EC2Instance.NetworkInterfaces {
-			if iface.PrivateIpAddress != nil && *iface.PrivateIpAddress != "" &&
-				iface.PrivateDnsName != nil && *iface.PrivateDnsName != "" &&
-				*iface.PrivateDnsName == *t.EC2Instance.PrivateDnsName {
-				ip = *iface.PrivateIpAddress
+		for _, iFace := range t.EC2Instance.NetworkInterfaces {
+			if iFace.PrivateIpAddress != nil && *iFace.PrivateIpAddress != "" &&
+				iFace.PrivateDnsName != nil && *iFace.PrivateDnsName != "" &&
+				*iFace.PrivateDnsName == *t.EC2Instance.PrivateDnsName {
+				ip = *iFace.PrivateIpAddress
 				break
 			}
 		}
@@ -594,7 +596,14 @@ func GetAugmentedTasks(svc *ecs.Client, svcec2 *ec2.Client, clusterArns []*strin
 func main() {
 	flag.Parse()
 
-	configuration, err := config.LoadDefaultConfig(context.Background())
+	ctx := context.TODO()
+
+	region := os.Getenv("AWS_REGION")
+	if region == "" {
+		region = "us-east-1"
+	}
+
+	configuration, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
 	if err != nil {
 		logError(err)
 		return
@@ -606,6 +615,17 @@ func main() {
 		configuration.Credentials = stscreds.NewAssumeRoleProvider(stsSvc, *roleArn)
 	}
 
+	configFileDir, present := os.LookupEnv("CONFIG_FILE_DIR")
+	if !present {
+		configFileDir = "/etc/config"
+	}
+	ssmParameterName, present := os.LookupEnv("CONFIG_SSM_PARAMETER")
+	if !present {
+		log.Fatalf("please set '%s' with the SSM parameter name for the configuration", "CONFIG_SSM_PARAMETER")
+	}
+	var prometheusConfigFilePath = strings.Join([]string{configFileDir, "prometheus.yaml"}, "/")
+	loadPrometheusConfig(ctx, prometheusConfigFilePath, ssmParameterName)
+
 	// Initialise AWS Service clients
 	svc := ecs.NewFromConfig(configuration)
 	svcEc2 := ec2.NewFromConfig(configuration)
@@ -614,7 +634,7 @@ func main() {
 		var clusters *ecs.ListClustersOutput
 
 		if *cluster != "" {
-			res, err := svc.DescribeClusters(context.Background(), &ecs.DescribeClustersInput{
+			res, err := svc.DescribeClusters(ctx, &ecs.DescribeClustersInput{
 				Clusters: []string{*cluster},
 			})
 			if err != nil {
@@ -675,4 +695,13 @@ func main() {
 			break
 		}
 	}
+}
+
+func loadPrometheusConfig(ctx context.Context, filePath string, parameter string) {
+	prometheusConfig := aws.GetParameter(ctx, parameter)
+	err := ioutil.WriteFile(filePath, []byte(*prometheusConfig), 0644)
+	if err != nil {
+		log.Fatalf("could not write config '%s': %v", filePath, err)
+	}
+	log.Printf("saved config to '%s'\n", filePath)
 }
