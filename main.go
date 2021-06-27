@@ -28,9 +28,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
-	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	ec2Types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
-	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	ecsTypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go"
 	"github.com/go-yaml/yaml"
@@ -60,7 +60,7 @@ var times = flag.Int("config.scrape-times", 0, "how many times to scrape before 
 var roleArn = flag.String("config.role-arn", "", "ARN of the role to assume when scraping the AWS API (optional)")
 var prometheusPortLabel = flag.String("config.port-label", "PROMETHEUS_EXPORTER_PORT", "Docker label to define the scrape port of the application (if missing an application won't be scraped)")
 var prometheusPathLabel = flag.String("config.path-label", "PROMETHEUS_EXPORTER_PATH", "Docker label to define the scrape path of the application")
-var prometheusSchemeLabel= flag.String("config.scheme-label", "PROMETHEUS_EXPORTER_SCHEME", "Docker label to define the scheme of the target application")
+var prometheusSchemeLabel = flag.String("config.scheme-label", "PROMETHEUS_EXPORTER_SCHEME", "Docker label to define the scheme of the target application")
 var prometheusFilterLabel = flag.String("config.filter-label", "", "Docker label (and optionally value) to require to scrape the application")
 var prometheusServerNameLabel = flag.String("config.server-name-label", "PROMETHEUS_EXPORTER_SERVER_NAME", "Docker label to define the server name")
 var prometheusJobNameLabel = flag.String("config.job-name-label", "PROMETHEUS_EXPORTER_JOB_NAME", "Docker label to define the job name")
@@ -102,19 +102,9 @@ func GetClusters(svc *ecs.Client) (*ecs.ListClustersOutput, error) {
 // structures representing the ECS task definition and EC2 instance
 // associated with the running task.
 type AugmentedTask struct {
-	*ecstypes.Task
-	TaskDefinition *ecstypes.TaskDefinition
-	EC2Instance    *ec2types.Instance
-}
-
-// PrometheusContainer represents a tuple of information
-// (Container Name, Container ARN, Docker image, Port)
-// extracted from a task, its task definition
-type PrometheusContainer struct {
-	ContainerName string
-	ContainerArn  string
-	DockerImage   string
-	Port          int
+	*ecsTypes.Task
+	TaskDefinition *ecsTypes.TaskDefinition
+	EC2Instance    *ec2Types.Instance
 }
 
 // PrometheusTaskInfo is the final structure that will be
@@ -151,11 +141,11 @@ type PrometheusTaskInfo struct {
 //              ],
 //     ...
 func (t *AugmentedTask) ExporterInformation() []*PrometheusTaskInfo {
-	ret := []*PrometheusTaskInfo{}
+	var ret []*PrometheusTaskInfo
 	var host string
 	var ip string
 
-	if t.LaunchType != ecstypes.LaunchTypeFargate {
+	if t.LaunchType != ecsTypes.LaunchTypeFargate {
 		if t.EC2Instance == nil {
 			return ret
 		}
@@ -184,7 +174,7 @@ func (t *AugmentedTask) ExporterInformation() []*PrometheusTaskInfo {
 
 	for _, i := range t.Containers {
 		// Let's go over the containers to see which ones are defined
-		var d ecstypes.ContainerDefinition
+		var d ecsTypes.ContainerDefinition
 		for _, d = range t.TaskDefinition.ContainerDefinitions {
 			if *i.Name == *d.Name {
 				// Aha, the container definition match this container we
@@ -192,7 +182,7 @@ func (t *AugmentedTask) ExporterInformation() []*PrometheusTaskInfo {
 				break
 			}
 		}
-		if *i.Name != *d.Name && t.LaunchType != ecstypes.LaunchTypeFargate {
+		if *i.Name != *d.Name && t.LaunchType != ecsTypes.LaunchTypeFargate {
 			// Nope, no match, this container cannot be exported.  We continue.
 			continue
 		}
@@ -297,7 +287,7 @@ func (t *AugmentedTask) ExporterInformation() []*PrometheusTaskInfo {
 
 		scheme, ok = d.DockerLabels[*prometheusSchemeLabel]
 		if ok {
-		    labels.Scheme = scheme
+			labels.Scheme = scheme
 		}
 
 		ret = append(ret, &PrometheusTaskInfo{
@@ -311,7 +301,7 @@ func (t *AugmentedTask) ExporterInformation() []*PrometheusTaskInfo {
 // AddTaskDefinitionsOfTasks adds to each Task the TaskDefinition
 // corresponding to it.
 func AddTaskDefinitionsOfTasks(svc *ecs.Client, taskList []*AugmentedTask) ([]*AugmentedTask, error) {
-	task2def := make(map[string]*ecstypes.TaskDefinition)
+	task2def := make(map[string]*ecsTypes.TaskDefinition)
 	for _, task := range taskList {
 		task2def[*task.TaskDefinitionArn] = nil
 	}
@@ -375,27 +365,27 @@ func StringToStarString(s []string) []*string {
 // because AWS API has limits on number of elements you can
 // submit via one call.
 func SplitArray(a []string, size int) [][]string {
-	var splitted [][]string
+	var split [][]string
 	for i := 0; i < len(a); i += size {
 		end := i + size
 		if end > len(a) {
 			end = len(a)
 		}
-		splitted = append(splitted, a[i:end])
+		split = append(split, a[i:end])
 	}
-	return splitted
+	return split
 }
 
-// DescribeInstancesUnpaginated describes a list of EC2 instances.
-// It is unpaginated because the API function does not require
+// DescribeInstancesWithoutPagination describes a list of EC2 instances.
+// It is not paginated because the API function does not require
 // pagination.
-func DescribeInstancesUnpaginated(svc *ec2.Client, instanceIds []string) ([]ec2types.Instance, error) {
+func DescribeInstancesWithoutPagination(svc *ec2.Client, instanceIds []string) ([]ec2Types.Instance, error) {
 	if len(instanceIds) == 0 {
 		return nil, nil
 	}
 	finalOutput := &ec2.DescribeInstancesOutput{}
-	splittedInstanceIds := SplitArray(instanceIds, 100)
-	for _, chunkedInstanceIds := range splittedInstanceIds {
+	splitInstanceIds := SplitArray(instanceIds, 100)
+	for _, chunkedInstanceIds := range splitInstanceIds {
 		input := &ec2.DescribeInstancesInput{
 			InstanceIds: chunkedInstanceIds,
 		}
@@ -412,7 +402,7 @@ func DescribeInstancesUnpaginated(svc *ec2.Client, instanceIds []string) ([]ec2t
 			input.NextToken = output.NextToken
 		}
 	}
-	result := []ec2types.Instance{}
+	var result []ec2Types.Instance
 	for _, rsv := range finalOutput.Reservations {
 		for _, i := range rsv.Instances {
 			result = append(result, i)
@@ -425,17 +415,17 @@ func DescribeInstancesUnpaginated(svc *ec2.Client, instanceIds []string) ([]ec2t
 // running its containers.
 func AddContainerInstancesToTasks(svc *ecs.Client, svcec2 *ec2.Client, taskList []*AugmentedTask) ([]*AugmentedTask, error) {
 
-	clusterArnToContainerInstancesArns := make(map[string]map[string]*ecstypes.ContainerInstance)
+	clusterArnToContainerInstancesArns := make(map[string]map[string]*ecsTypes.ContainerInstance)
 	for _, task := range taskList {
 		if task.ContainerInstanceArn != nil {
 			if _, ok := clusterArnToContainerInstancesArns[*task.ClusterArn]; !ok {
-				clusterArnToContainerInstancesArns[*task.ClusterArn] = make(map[string]*ecstypes.ContainerInstance)
+				clusterArnToContainerInstancesArns[*task.ClusterArn] = make(map[string]*ecsTypes.ContainerInstance)
 			}
 			clusterArnToContainerInstancesArns[*task.ClusterArn][*task.ContainerInstanceArn] = nil
 		}
 	}
 
-	instanceIDToEC2Instance := make(map[string]*ec2types.Instance)
+	instanceIDToEC2Instance := make(map[string]*ec2Types.Instance)
 	for clusterArn, containerInstancesArns := range clusterArnToContainerInstancesArns {
 		keys := make([]string, 0, len(containerInstancesArns))
 		for k := range containerInstancesArns {
@@ -472,7 +462,7 @@ func AddContainerInstancesToTasks(svc *ecs.Client, svcec2 *ec2.Client, taskList 
 		keys = append(keys, id)
 	}
 
-	instances, err := DescribeInstancesUnpaginated(svcec2, keys)
+	instances, err := DescribeInstancesWithoutPagination(svcec2, keys)
 	if err != nil {
 		return nil, err
 	}
@@ -502,7 +492,7 @@ func AddContainerInstancesToTasks(svc *ecs.Client, svcec2 *ec2.Client, taskList 
 }
 
 // GetTasksOfClusters returns the EC2 tasks running in a list of Clusters.
-func GetTasksOfClusters(svc *ecs.Client, clusterArns []*string) ([]ecstypes.Task, error) {
+func GetTasksOfClusters(svc *ecs.Client, clusterArns []*string) ([]ecsTypes.Task, error) {
 	jobs := make(chan *string, len(clusterArns))
 	results := make(chan struct {
 		out *ecs.DescribeTasksOutput
@@ -562,7 +552,7 @@ func GetTasksOfClusters(svc *ecs.Client, clusterArns []*string) ([]ecstypes.Task
 	}
 	close(jobs)
 
-	tasks := []ecstypes.Task{}
+	var tasks []ecsTypes.Task
 	for range clusterArns {
 		result := <-results
 		if result.err != nil {
@@ -584,7 +574,7 @@ func GetAugmentedTasks(svc *ecs.Client, svcec2 *ec2.Client, clusterArns []*strin
 		return nil, err
 	}
 
-	tasks := []*AugmentedTask{}
+	var tasks []*AugmentedTask
 	for i := 0; i < len(simpleTasks); i++ {
 		tasks = append(tasks, &AugmentedTask{&simpleTasks[i], nil, nil})
 	}
@@ -604,7 +594,7 @@ func GetAugmentedTasks(svc *ecs.Client, svcec2 *ec2.Client, clusterArns []*strin
 func main() {
 	flag.Parse()
 
-	config, err := config.LoadDefaultConfig(context.Background())
+	configuration, err := config.LoadDefaultConfig(context.Background())
 	if err != nil {
 		logError(err)
 		return
@@ -612,13 +602,13 @@ func main() {
 
 	if *roleArn != "" {
 		// Assume role
-		stsSvc := sts.NewFromConfig(config)
-		config.Credentials = stscreds.NewAssumeRoleProvider(stsSvc, *roleArn)
+		stsSvc := sts.NewFromConfig(configuration)
+		configuration.Credentials = stscreds.NewAssumeRoleProvider(stsSvc, *roleArn)
 	}
 
 	// Initialise AWS Service clients
-	svc := ecs.NewFromConfig(config)
-	svcec2 := ec2.NewFromConfig(config)
+	svc := ecs.NewFromConfig(configuration)
+	svcEc2 := ec2.NewFromConfig(configuration)
 
 	work := func() {
 		var clusters *ecs.ListClustersOutput
@@ -647,15 +637,14 @@ func main() {
 				return
 			}
 			clusters = c
-
 		}
 
-		tasks, err := GetAugmentedTasks(svc, svcec2, StringToStarString(clusters.ClusterArns))
+		tasks, err := GetAugmentedTasks(svc, svcEc2, StringToStarString(clusters.ClusterArns))
 		if err != nil {
 			logError(err)
 			return
 		}
-		infos := []*PrometheusTaskInfo{}
+		var infos []*PrometheusTaskInfo
 		for _, t := range tasks {
 			info := t.ExporterInformation()
 			infos = append(infos, info...)

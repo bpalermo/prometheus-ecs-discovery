@@ -1,10 +1,11 @@
-FROM golang:1.11-alpine
-WORKDIR /src
-RUN apk --no-cache add git
-COPY *.go go.mod go.sum ./
-RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/prometheus-ecs-discovery .
+FROM golang:1.15 as build-env
+WORKDIR /go/src/app
+ADD . /go/src/app
 
-FROM alpine:latest
-RUN apk --no-cache add ca-certificates
-COPY --from=0 /bin/prometheus-ecs-discovery /bin/
-ENTRYPOINT ["prometheus-ecs-discovery"]
+RUN go get -d -v ./...
+
+RUN go build -o /go/bin/app
+
+FROM gcr.io/distroless/base
+COPY --from=build-env /go/bin/app /
+CMD ["/app"]

@@ -1,4 +1,4 @@
-module github.com/teralytics/prometheus-ecs-discovery
+module github.com/bpalermo/prometheus-ecs-discovery
 
 go 1.15
 
